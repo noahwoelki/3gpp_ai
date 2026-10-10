@@ -22,7 +22,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from google.adk.runners import InMemoryRunner
 from google.genai import types
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from specdelta import config
 from specdelta.agents.assistant.agent import root_agent
@@ -46,8 +46,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="SpecDelta", lifespan=lifespan)
 
 
+# The service is public, so very long inputs are refused instead of being sent to Gemini
+MAX_MESSAGE_CHARS = 2000
+
+
 class ChatRequest(BaseModel):
-    message: str
+    message: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARS)
     session_id: str | None = None
     specs: list[str] | None = None
     releases: list[str] | None = None

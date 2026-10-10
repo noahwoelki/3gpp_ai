@@ -118,45 +118,13 @@ account that can only read BigQuery and call Gemini and the ranking API.
 ```
 make setup-gcp    # once: enable APIs, create the service account and its roles
 make deploy       # build with Cloud Build and deploy (a few minutes)
-make proxy        # open the private service on http://localhost:8080
+make logs         # follow the service logs
 ```
 
-The service is deployed without public access, so `make proxy` (a `gcloud` tunnel) is
-the way in until IAP is set up.
-
-### Google login with IAP
-
-Identity-Aware Proxy puts a Google login in front of the service, so the Cloud Run URL
-works in the browser for the accounts you allow. A project under a personal Google
-account has no Cloud organization, so IAP needs its own OAuth client. This is a
-one-time setup in the console:
-
-1. **Google Auth Platform > Branding:** set an app name and support email.
-   **Audience:** user type *External*. While the app is in testing, add every Google
-   account that should get access as a test user.
-2. **Google Auth Platform > Clients > Create client:** type *Web application*. Create it,
-   note the client ID, then add the authorized redirect URI
-   `https://iap.googleapis.com/v1/oauth/clientIds/CLIENT_ID:handleRedirect` and save.
-3. Tell IAP to use this client. Create `iap_settings.yaml` (do not commit it, it holds
-   the client secret):
-   ```yaml
-   access_settings:
-     oauth_settings:
-       client_id: CLIENT_ID
-       client_secret: CLIENT_SECRET
-   ```
-   and run `gcloud iap settings set iap_settings.yaml --project=PROJECT_ID`.
-
-Then:
-
-```
-make enable-iap
-make grant-access EMAIL=you@gmail.com
-```
-
-The service URL is printed by `make deploy` (`https://specdelta-....run.app`). To let
-someone else try it, add them as a test user and run `make grant-access` with their
-email. Remove them again afterwards.
+`make deploy` prints the service URL (`https://specdelta-....run.app`). The service is
+public: anyone with the URL can use it. To keep costs bounded, at most two instances
+run at a time and questions are limited to 2000 characters. A billing budget alert on
+the project is a good idea on top.
 
 ## Repository layout
 
@@ -179,5 +147,7 @@ tests/
 - Figures are images in the specs. Only their captions are indexed.
 - Some 38.101-1 headings are numbered inconsistently in the spec itself (e.g.
   `6.5.A.2.2`). They are kept as they are.
+- The demo is public without login, so it relies on the instance limit and a budget
+  alert to keep costs in check.
 - The citation check is visual only so far (red citations). The next step is to check
   citations before the answer is shown and let the agent revise it.

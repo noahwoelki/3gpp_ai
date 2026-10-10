@@ -1,0 +1,12 @@
+.git
+.venv
+.env
+CLAUDE.md
+data
+tests
+scripts
+web/node_modules
+web/dist
+**/__pycache__
+.pytest_cache
+.ruff_cache

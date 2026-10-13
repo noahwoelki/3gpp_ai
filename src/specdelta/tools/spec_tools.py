@@ -172,20 +172,32 @@ def get_table(spec: str, release: str, table_id: str) -> dict:
     }
 
 
+def search_terms(text: str) -> list[str]:
+    """Split "n78 and n105" or "n78, n105" into ["n78", "n105"]."""
+    words = re.split(r"[\s,;]+", text.strip())
+    return [w for w in words if w and w.lower() not in ("and", "or", "with")]
+
+
 def matching_rows(data: list[list[str]], text: str) -> list[int]:
-    """Indexes of the rows that contain text in any cell (case-insensitive), plus the rows
-    that continue them. A row with an empty first cell continues the entry above, e.g.
-    the other bands of the same CA configuration."""
-    pattern = re.compile(re.escape(text), re.IGNORECASE)
-    matching = set()
+    """Indexes of the rows of all entries that contain every search term (case-insensitive).
+
+    An entry is a row plus the rows that continue it: a row with an empty first cell
+    belongs to the entry above, e.g. the other bands of the same CA configuration. So
+    "n78 n105" finds configurations that have n78 in one row and n105 in another."""
+    entries: list[list[int]] = []
     for index, row in enumerate(data):
-        if any(pattern.search(cell) for cell in row):
-            matching.add(index)
-            following = index + 1
-            while following < len(data) and data[following][0] == "":
-                matching.add(following)
-                following += 1
-    return sorted(matching)
+        if row[0] == "" and entries:
+            entries[-1].append(index)
+        else:
+            entries.append([index])
+
+    terms = [term.lower() for term in search_terms(text)]
+    matching = []
+    for entry in entries:
+        entry_text = " ".join(cell for i in entry for cell in data[i]).lower()
+        if terms and all(term in entry_text for term in terms):
+            matching += entry
+    return matching
 
 
 def search_table_rows(spec: str, release: str, table_id: str, text: str) -> dict:
@@ -195,7 +207,9 @@ def search_table_rows(spec: str, release: str, table_id: str, text: str) -> dict
         spec: Spec number, e.g. "38.101-1".
         release: Release, e.g. "Rel-18".
         table_id: Table id as given in search results, e.g. "5.5A.3.2/1".
-        text: Text to look for in any cell, case-insensitive, e.g. "n78" or "CA_n3A-n78A".
+        text: One or more terms, case-insensitive, e.g. "n78", "CA_n3A-n78A" or
+            "n78 n105". With several terms, an entry (a row plus the rows continuing it)
+            matches only if it contains all of them.
 
     Returns:
         The header, the matching rows (plus the rows that continue them) and the notes

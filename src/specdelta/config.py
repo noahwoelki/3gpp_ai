@@ -11,6 +11,9 @@ BQ_DATASET = os.environ.get("BQ_DATASET", "specdelta")
 # GOOGLE_CLOUD_LOCATION is also what ADK and the google-genai SDK read for this.
 VERTEX_LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
 FLASH_MODEL = os.environ.get("FLASH_MODEL", "gemini-2.5-flash")
+# For the coordinator, which only routes: faster and with its own quota, which takes load
+# off FLASH_MODEL when Vertex AI is busy
+LITE_MODEL = os.environ.get("LITE_MODEL", "gemini-2.5-flash-lite")
 EMBEDDING_MODEL = "gemini-embedding-001"
 EMBEDDING_DIMENSIONS = 768
 

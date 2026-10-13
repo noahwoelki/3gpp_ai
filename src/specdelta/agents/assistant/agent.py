@@ -5,11 +5,17 @@ coordinator (root_agent)
 
 The search agent is a single_turn sub-agent: ADK attaches it to the coordinator as a
 tool, so its answer comes back to the coordinator instead of taking over the chat. The
-diff and table agents (M4) are added the same way.
+API (api.py) then shows that answer to the user as it is, the coordinator does not
+repeat it. The diff and table agents (M4) are added the same way.
 """
 
+import logging
+
 from google.adk.agents import Agent
+from google.adk.agents.callback_context import CallbackContext
 from google.adk.models.google_llm import Gemini
+from google.adk.models.llm_request import LlmRequest
+from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 
 from specdelta import config
@@ -57,19 +63,42 @@ COORDINATOR_INSTRUCTION = """You are the entry point of SpecDelta, an assistant 
 specifications (TS 38.300, TS 38.321, TS 38.101-1 in Rel-17 and Rel-18, TR 21.905).
 
 For any question about the content of these specs, call search_agent with the user's
-question, including any spec or release the user mentioned. Then give the user the
-answer of search_agent. Keep all its citations ([spec release §clause]) exactly as they
-are and do not add facts of your own.
+question, including any spec or release the user mentioned. Its answer is shown to the
+user directly.
+
+If search_agent returns an error, tell the user that the lookup failed and that they
+can try again. Never claim that a question cannot be answered or that tools are missing
+because of an error.
 
 For greetings or questions about what you can do, answer briefly yourself.
 """
 
-# Retry with backoff, Vertex AI answers with 429 when the shared quota is busy. Kept
-# short (about 30 s at most), longer silent waiting looks like a hang in the UI.
+logger = logging.getLogger(__name__)
+
+# Vertex AI sometimes answers with 429 or very slowly when the shared quota is busy.
+# Flash gets one quick retry and a time limit per call. If it still fails, the same
+# request goes to the lite model (see fall_back_to_lite), which has its own quota.
+CALL_TIMEOUT = types.HttpOptions(timeout=30_000)  # milliseconds, per model call
 FLASH = Gemini(
     model=config.FLASH_MODEL,
-    retry_options=types.HttpRetryOptions(attempts=4, initial_delay=2, max_delay=15),
+    retry_options=types.HttpRetryOptions(attempts=2, initial_delay=2, max_delay=5),
 )
+LITE = Gemini(
+    model=config.LITE_MODEL,
+    retry_options=types.HttpRetryOptions(attempts=3, initial_delay=2, max_delay=10),
+)
+
+
+async def fall_back_to_lite(
+    callback_context: CallbackContext, llm_request: LlmRequest, error: Exception
+) -> LlmResponse | None:
+    """Send a failed Flash request to the lite model instead of failing the answer."""
+    logger.warning("%s failed (%s), using %s", llm_request.model, error, LITE.model)
+    llm_request.model = LITE.model
+    # Not streaming, so this yields a single response
+    responses = [r async for r in LITE.generate_content_async(llm_request)]
+    return responses[-1] if responses else None
+
 
 # No thinking: with it, one answer took 15-40 s instead of 4-6 s. The agents mostly
 # route and write up tool results, the eval shows whether that costs answer quality.
@@ -81,15 +110,21 @@ search_agent = Agent(
     description="Answers questions about the content of the 3GPP specs, with clause citations.",
     instruction=SEARCH_INSTRUCTION,
     tools=[search_specs, get_clause, get_table, search_table_rows, lookup_term],
-    generate_content_config=types.GenerateContentConfig(temperature=0, thinking_config=NO_THINKING),
+    generate_content_config=types.GenerateContentConfig(
+        temperature=0, thinking_config=NO_THINKING, http_options=CALL_TIMEOUT
+    ),
+    on_model_error_callback=fall_back_to_lite,
     mode="single_turn",
 )
 
+# The coordinator only routes and passes the answer on, so it runs on the lite model
 root_agent = Agent(
     name="coordinator",
-    model=FLASH,
+    model=LITE,
     description="Routes questions about 3GPP specs to the right specialist agent.",
     instruction=COORDINATOR_INSTRUCTION,
-    generate_content_config=types.GenerateContentConfig(thinking_config=NO_THINKING),
+    generate_content_config=types.GenerateContentConfig(
+        thinking_config=NO_THINKING, http_options=CALL_TIMEOUT
+    ),
     sub_agents=[search_agent],
 )

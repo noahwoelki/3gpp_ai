@@ -14,12 +14,14 @@ clause or table behind a source, for the source viewer.
 
 import asyncio
 import json
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from google.adk.agents import RunConfig
 from google.adk.runners import InMemoryRunner
 from google.genai import types
 from pydantic import BaseModel, Field
@@ -30,6 +32,17 @@ from specdelta.tools import spec_tools
 
 APP_NAME = "specdelta"
 ANSWER_TIMEOUT_SECONDS = 90
+# What ADK hands to the coordinator when a sub-agent fails, e.g. after a 429 from Gemini
+SUB_AGENT_ERROR = "Error running sub-agent"
+BUSY_MESSAGE = "The model service is busy right now. Please try again in a moment."
+SPECIALISTS = {agent.name for agent in root_agent.sub_agents}
+# Hard cap on model calls per question, so an agent that keeps calling tools without
+# getting anywhere stops instead of running into the time limit
+RUN_CONFIG = RunConfig(max_llm_calls=15)
+
+# The stream stops as soon as the answer is there, which ends the ADK run early.
+# OpenTelemetry then logs a harmless "Failed to detach context" traceback every time.
+logging.getLogger("opentelemetry.context").setLevel(logging.CRITICAL)
 USER_ID = "web"
 WEB_DIST = config.REPO_ROOT / "web" / "dist"
 
@@ -139,6 +152,7 @@ async def chat_events(request: ChatRequest):
                 session_id=session.id,
                 new_message=message,
                 state_delta={"ui_filters": filters},
+                run_config=RUN_CONFIG,
             ):
                 for part in event.content.parts if event.content and event.content.parts else []:
                     if part.function_call:
@@ -155,8 +169,20 @@ async def chat_events(request: ChatRequest):
                         )
                     elif part.function_response:
                         result = part.function_response
+                        response = dict(result.response or {})
+                        # Stop here instead of letting the coordinator explain the failure
+                        # in its own words, which tends to produce made-up reasons
+                        if str(response.get("result", "")).startswith(SUB_AGENT_ERROR):
+                            yield sse({"type": "error", "message": BUSY_MESSAGE})
+                            return
+                        # The answer of a specialist agent goes to the user as it is.
+                        # Letting the coordinator repeat it costs a model call and it
+                        # tends to drop citations on the way.
+                        if result.name in SPECIALISTS and response.get("result"):
+                            yield sse({"type": "answer", "text": response["result"]})
+                            return
                         tool, args = calls.get(result.id, (result.name, {}))
-                        sources = sources_from(tool, args, dict(result.response or {}))
+                        sources = sources_from(tool, args, response)
                         if sources:
                             yield sse({"type": "sources", "sources": sources})
                 if event.author == root_agent.name and event.is_final_response() and event.content:
@@ -164,11 +190,12 @@ async def chat_events(request: ChatRequest):
                     if text:
                         yield sse({"type": "answer", "text": text})
     except TimeoutError:
-        text = (
-            f"No answer after {ANSWER_TIMEOUT_SECONDS} s. The model service is probably busy, "
-            "please try again in a moment."
+        yield sse(
+            {
+                "type": "error",
+                "message": f"No answer after {ANSWER_TIMEOUT_SECONDS} s. {BUSY_MESSAGE}",
+            }
         )
-        yield sse({"type": "error", "message": text})
     except Exception as error:  # report to the UI instead of breaking the stream
         yield sse({"type": "error", "message": str(error)})
 

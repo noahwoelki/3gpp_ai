@@ -72,23 +72,3 @@ Everything runs on Google Cloud.
 - **Cloud Run** hosts one container with a FastAPI backend and a small React UI. The UI
   streams the agent steps while it works and shows the retrieved sources next to the
   answer. It scales to zero when nobody uses it.
-- The service runs with its own service account that can only read BigQuery and call
-  the models. No API keys anywhere, locally it uses my own `gcloud` login.
-- The demo is public. At most two instances run at a time and questions are limited
-  in length, so costs stay small.
-
-Ingestion (parse, describe tables, embed, load into BigQuery) runs locally, since it
-only has to run once per new spec version.
-
-## Running it
-
-The 3GPP documents are not in the repo. With Python 3.12, uv, Node and a Google Cloud
-project:
-
-```
-cp .env.example .env    # set GOOGLE_CLOUD_PROJECT
-make sync
-make download parse describe embed load
-make dev-api            # then make dev-web, UI on http://localhost:5173
-make setup-gcp deploy   # Cloud Run
-```

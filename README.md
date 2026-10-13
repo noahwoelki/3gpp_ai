@@ -1,153 +1,94 @@
 # SpecDelta
 
-SpecDelta answers questions about 3GPP specifications and cites the clause every
-statement comes from, e.g. `[38.300 Rel-18 §15.4.2.3]`. It runs on Google Cloud
-(Vertex AI, BigQuery, Cloud Run) with agents built on Google ADK.
+A side project to try out agents and retrieval on Google Cloud with a corpus I know
+well. You can ask questions about a few 3GPP specs and get answers that cite the clause
+each statement comes from, e.g. `[38.300 Rel-18 §15.4.2.3]`. Comparing what changed
+between releases is the next thing I want to add.
 
-The corpus is small on purpose: TS 38.300 (NR overall description), TS 38.321 (MAC) and
-TS 38.101-1 (UE radio requirements, FR1), each in Rel-17 and Rel-18, plus the 3GPP
+## Background
+
+3GPP writes the standards for mobile networks (LTE, 5G NR). They are published as long
+Word documents, organized in numbered clauses, and a new release comes out every year
+or two. Engineers spend a lot of time looking things up in them and figuring out what
+changed from one release to the next.
+
+To keep it small, the corpus is seven documents. TS 38.300 (NR overview), TS 38.321
+(MAC) and TS 38.101-1 (UE radio requirements) in Rel-17 and Rel-18, plus the 3GPP
 vocabulary TR 21.905.
 
-**Status:** first version. Question answering with citations, a sources view and
-release/spec filters work. Comparing releases (what changed between Rel-17 and Rel-18,
-per clause) is the next step; the clause diff behind it is already done
-(`make diff`).
+Some things that make this corpus harder than average text:
 
-## How it works
+- Large parts are tables, not prose. 38.101-1 alone has around 700 tables, some with
+  more than 2000 rows of band combinations. A table row on its own means nothing
+  without its header and notes.
+- Questions are often about exact identifiers like `NS_05`, `n78` or `CA_n3A-n78A`.
+  These look almost the same to an embedding model.
+- The same abbreviation can mean different things in different specs. NCR is
+  "Neighbour Cell Relation" in 38.300 and "Network-Controlled Repeater" in 38.321.
+- The structure of the Word files is not fully consistent, e.g. a custom heading style
+  in one release, footnote markers as superscripts glued to the values (band n24 with
+  note 16 reads "n2416"), or typos in clause numbers.
 
-```
- 3GPP .docx  ->  parse  ->  clauses, tables, glossary  ->  chunks  ->  embeddings
-                                                                          |
-                                                                       BigQuery
-                                                                          |
- browser  ->  Cloud Run: FastAPI + React UI  ->  ADK agents  ->  tools (search, clause, table, glossary)
-```
+## AI
 
-**Parsing.** The specs come as Word files. Heading styles give the clause numbers, so
-every clause is stored with its number, title, parent path and content. The content is
-kept as an ordered list of blocks (paragraphs with their 3GPP style, and tables with
-caption, header rows and cells), so it can be shown as plain text for search and diff,
-or rendered properly in the UI. Superscript footnote markers in tables are kept as
-`(note 3)` instead of being glued to the value (band "n24" with note 16 would otherwise
-read "n2416").
+**Parsing does most of the work.** Every clause is stored with its number, title and
+content, and tables keep their structure (caption, header rows, cells, notes). Plain
+text for search, formatted text for the UI, and the clause diff between releases are
+all derived from that.
 
-**Chunking.** Text is cut into chunks of about 450 words at paragraph boundaries. Tables
-are chunked separately, and every table chunk can be read on its own: caption, header
-rows, a group of rows, and only the notes those rows refer to.
+**Tables get special treatment.** Each table chunk repeats the header and carries only
+the notes its rows refer to. Very large tables are not embedded row by row, because
+hundreds of near-identical chunks would crowd out everything else. Instead Gemini
+writes a short description of each, which is embedded, and the agent fetches the
+actual rows when it needs them. When a table is found and fits into the context, the
+whole table is passed to the model instead of a fragment.
 
-Large tables (three or more chunks, such as the CA configuration lists with up to 2000
-rows) are 9% of the 38.101-1 tables but almost 30% of its chunks, and their chunks look
-nearly identical to an embedding model. They are not embedded row by row. Instead a
-short Gemini call writes a description of each such table, and that description is
-embedded. The row chunks are still used for keyword search, where exact strings like
-`CA_n3A-n78A` match well.
+**Search is hybrid.** Vector search alone failed on exactly the questions engineers
+ask. For "What is the A-MPR for NS_05?" it returned 30 A-MPR clauses for other NS
+values and none for NS_05. So keyword search (BM25, with a tokenizer that keeps
+identifiers like `CA_n3A-n78A` intact) runs next to it, both lists are merged with
+reciprocal rank fusion, and a reranker sorts the result.
 
-**Search.** Hybrid search, then reranking:
-1. Vector search in BigQuery (`VECTOR_SEARCH`, `gemini-embedding-001`, 768 dimensions).
-2. BM25 keyword search in Python. BigQuery's `SEARCH` function only returns true/false,
-   so the keyword ranking happens in the app over the chunk texts (a few MB, loaded at
-   startup). The tokenizer keeps identifiers like `CA_n3A-n78A` whole and also adds
-   their parts.
-3. Reciprocal rank fusion of both lists, then the Vertex AI ranking API.
-4. One hit per table. If a table fits 1500 words (95% of all tables), the whole table
-   goes into the context, otherwise the best matching part.
+**Agents.** A coordinator passes questions to a search agent built with Google ADK.
+The search agent has a few tools (search, read a clause, read a table, find rows in a
+table, look up a term) and is told to answer only from what they return. In one test
+it skipped the tools and answered from memory with a made-up clause number, which is
+why the UI marks every citation that does not match a retrieved source in red. A proper
+check before the answer is shown is still on the list.
 
-Without a release filter, each spec is searched in its latest release.
+**Model choice.** Gemini 2.5 Flash for everything, with thinking turned off. With
+thinking, an answer took 15 to 40 seconds instead of about 5, without a visible gain
+for this kind of lookup.
 
-Both retrievers are needed. For "What is the A-MPR for NS_05?", vector search returns
-30 A-MPR clauses for other NS values (NS_31, NS_65, ...) and none for NS_05, because to
-an embedding model these look the same. Keyword search finds the right clause first,
-and the reranker puts it on top.
+## Cloud
 
-**Agents.** A coordinator agent passes questions to a search agent, which uses the
-tools `search_specs`, `get_clause`, `get_table`, `search_table_rows` and `lookup_term`
-and answers only from what they return. Gemini 2.5 Flash runs with thinking turned off:
-with thinking, one answer took 15-40 seconds instead of 4-6.
+Everything runs on Google Cloud.
 
-**UI.** The answer streams in step by step ("Searching 38.321 for ...", "Reading table
-6.2.3.4-2 ..."). Citations are clickable. A citation shows up in red if the cited clause
-was not among the retrieved sources. The sources panel lists every retrieved passage
-with how it was found (vector, keyword or both) and its rerank score, and opens the full
-clause or table with the retrieved part highlighted.
+- **Vertex AI** for Gemini, the embeddings (`gemini-embedding-001`) and the reranker.
+- **BigQuery** stores clauses, chunks with their embeddings, all tables and the
+  glossary. Vector search runs there with `VECTOR_SEARCH`. BigQuery's text search only
+  says match or no match, so the keyword ranking runs in the app over the chunk texts,
+  which are only a few MB.
+- **Cloud Run** hosts one container with a FastAPI backend and a small React UI. The UI
+  streams the agent steps while it works and shows the retrieved sources next to the
+  answer. It scales to zero when nobody uses it.
+- The service runs with its own service account that can only read BigQuery and call
+  the models. No API keys anywhere, locally it uses my own `gcloud` login.
+- The demo is public. At most two instances run at a time and questions are limited
+  in length, so costs stay small.
 
-## Running it locally
+Ingestion (parse, describe tables, embed, load into BigQuery) runs locally, since it
+only has to run once per new spec version.
 
-You need Python 3.12 with [uv](https://docs.astral.sh/uv/), Node.js, the `gcloud` CLI
-and a Google Cloud project with billing enabled. No API keys are used. Locally the code
-uses your own login (`gcloud auth application-default login`).
+## Running it
 
-```
-cp .env.example .env          # set GOOGLE_CLOUD_PROJECT
-make sync                     # Python dependencies
-```
-
-**Get the specs.** The 3GPP documents are not part of this repo. `make download` fetches
-the versions listed in `src/specdelta/config.py` from the public 3GPP archive
-(`https://www.3gpp.org/ftp/Specs/archive/`) into `data/raw/` and unzips them.
-
-**Build the index:**
+The 3GPP documents are not in the repo. With Python 3.12, uv, Node and a Google Cloud
+project:
 
 ```
-make parse      # clauses, chunks, typed tables, glossary -> data/parsed/ (about 1 min)
-make describe   # Gemini descriptions of the large tables
-make embed      # embeddings for all searchable chunks
-make load       # load everything into BigQuery
+cp .env.example .env    # set GOOGLE_CLOUD_PROJECT
+make sync
+make download parse describe embed load
+make dev-api            # then make dev-web, UI on http://localhost:5173
+make setup-gcp deploy   # Cloud Run
 ```
-
-Each step writes its results to `data/`, and `describe` and `embed` skip what is already
-done, so rerunning them is cheap.
-
-**Try it:**
-
-```
-make search Q="How does cell DTX/DRX work?"       # search only, shows how each hit was found
-make ask Q="What is the A-MPR for NS_05?"         # agents in the terminal
-make diff SPEC=38.300 CLAUSE=15.4                 # clause diff Rel-17 -> Rel-18
-make dev-api                                      # API on http://localhost:8080
-make dev-web                                      # UI on http://localhost:5173
-make dev-agent                                    # ADK dev UI on http://localhost:8000
-make test
-```
-
-## Deploying to Google Cloud
-
-The app runs as one Cloud Run service: FastAPI serves the API at `/api` and the built
-React app at `/`. It scales to zero when idle. The service runs as its own service
-account that can only read BigQuery and call Gemini and the ranking API.
-
-```
-make setup-gcp    # once: enable APIs, create the service account and its roles
-make deploy       # build with Cloud Build and deploy (a few minutes)
-make logs         # follow the service logs
-```
-
-`make deploy` prints the service URL (`https://specdelta-....run.app`). The service is
-public: anyone with the URL can use it. To keep costs bounded, at most two instances
-run at a time and questions are limited to 2000 characters. A billing budget alert on
-the project is a good idea on top.
-
-## Repository layout
-
-```
-src/specdelta/
-  ingest/     download, parse_docx, chunk, tables, glossary, describe_tables, embed, load_bigquery
-  search/     bm25, hybrid (vector + keyword + fusion + rerank), rerank
-  diff/       clause matching and diff between releases
-  tools/      functions the agents call
-  agents/     ADK agents (coordinator, search agent)
-  api.py      FastAPI app, streams agent steps to the UI
-web/          React UI (Vite, Tailwind)
-tests/
-```
-
-## Limitations
-
-- Seven documents only. Answers about topics specified elsewhere (e.g. TS 38.331 for
-  RRC) can only say where to look.
-- Figures are images in the specs. Only their captions are indexed.
-- Some 38.101-1 headings are numbered inconsistently in the spec itself (e.g.
-  `6.5.A.2.2`). They are kept as they are.
-- The demo is public without login, so it relies on the instance limit and a budget
-  alert to keep costs in check.
-- The citation check is visual only so far (red citations). The next step is to check
-  citations before the answer is shown and let the agent revise it.

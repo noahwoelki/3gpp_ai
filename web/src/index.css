@@ -1,2 +1,104 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
+
+@import "@fontsource-variable/fraunces";
+@import "@fontsource-variable/instrument-sans";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+
+/* Engineer's notebook: warm paper, dark ink, one signal-orange accent and a color per spec */
+@theme {
+  --font-display: "Fraunces Variable", Georgia, serif;
+  --font-sans: "Instrument Sans Variable", ui-sans-serif, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --color-paper: #f7f3ea;
+  --color-paper-deep: #efe8d8;
+  --color-card: #fffdf8;
+  --color-ink: #1d1b16;
+  --color-ink-soft: #5c574b;
+  --color-ink-faint: #9a9384;
+  --color-line: #e2dac7;
+  --color-signal: #ff5a1f;
+  --color-signal-soft: #ffe2d4;
+  --color-marker: #ffe86b;
+
+  /* one color per spec, used for clause tags and source stripes */
+  --color-spec-38300: #ff5a1f;
+  --color-spec-38321: #0f9d8a;
+  --color-spec-381011: #3b5bdb;
+  --color-spec-21905: #c99a06;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+  background-color: var(--color-paper);
+  /* faint dot grid, like engineering paper */
+  background-image: radial-gradient(circle, #d9d0bb 1px, transparent 1.2px);
+  background-size: 22px 22px;
+}
+
+/* A text marker stroke instead of a flat background */
+.marker {
+  background: linear-gradient(
+    100deg,
+    transparent 0.3em,
+    color-mix(in srgb, var(--color-marker) 85%, transparent) 0.5em,
+    var(--color-marker) 96%,
+    transparent
+  );
+  border-radius: 0.3em 0.6em 0.4em 0.7em;
+  box-decoration-break: clone;
+}
+
+/* Mobile signal bars, the loading indicator while the agents work */
+.signal-bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 14px;
+}
+.signal-bars span {
+  width: 3px;
+  border-radius: 1px;
+  background: var(--color-signal);
+  animation: signal 1.1s ease-in-out infinite;
+}
+.signal-bars span:nth-child(1) { height: 30%; animation-delay: 0s; }
+.signal-bars span:nth-child(2) { height: 55%; animation-delay: 0.15s; }
+.signal-bars span:nth-child(3) { height: 80%; animation-delay: 0.3s; }
+.signal-bars span:nth-child(4) { height: 100%; animation-delay: 0.45s; }
+
+@keyframes signal {
+  0%, 100% { opacity: 0.25; transform: scaleY(0.6); }
+  50% { opacity: 1; transform: scaleY(1); }
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.rise {
+  animation: rise 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes pop {
+  0% { opacity: 0; transform: scale(0.96); }
+  100% { opacity: 1; transform: scale(1); }
+}
+.pop {
+  animation: pop 0.25s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+/* Thin scrollbars that fit the paper look */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}

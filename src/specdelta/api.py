@@ -29,6 +29,7 @@ from specdelta.agents.assistant.agent import root_agent
 from specdelta.tools import spec_tools
 
 APP_NAME = "specdelta"
+ANSWER_TIMEOUT_SECONDS = 90
 USER_ID = "web"
 WEB_DIST = config.REPO_ROOT / "web" / "dist"
 
@@ -132,35 +133,42 @@ async def chat_events(request: ChatRequest):
     filters = {"specs": request.specs, "releases": request.releases}
     calls: dict[str, tuple[str, dict]] = {}  # function call id -> (tool, args)
     try:
-        async for event in runner.run_async(
-            user_id=USER_ID,
-            session_id=session.id,
-            new_message=message,
-            state_delta={"ui_filters": filters},
-        ):
-            for part in event.content.parts if event.content and event.content.parts else []:
-                if part.function_call:
-                    call = part.function_call
-                    args = dict(call.args or {})
-                    calls[call.id] = (call.name, args)
-                    yield sse(
-                        {
-                            "type": "step",
-                            "agent": event.author,
-                            "tool": call.name,
-                            "label": step_label(call.name, args),
-                        }
-                    )
-                elif part.function_response:
-                    result = part.function_response
-                    tool, args = calls.get(result.id, (result.name, {}))
-                    sources = sources_from(tool, args, dict(result.response or {}))
-                    if sources:
-                        yield sse({"type": "sources", "sources": sources})
-            if event.author == root_agent.name and event.is_final_response() and event.content:
-                text = "".join(p.text or "" for p in event.content.parts or [])
-                if text:
-                    yield sse({"type": "answer", "text": text})
+        async with asyncio.timeout(ANSWER_TIMEOUT_SECONDS):
+            async for event in runner.run_async(
+                user_id=USER_ID,
+                session_id=session.id,
+                new_message=message,
+                state_delta={"ui_filters": filters},
+            ):
+                for part in event.content.parts if event.content and event.content.parts else []:
+                    if part.function_call:
+                        call = part.function_call
+                        args = dict(call.args or {})
+                        calls[call.id] = (call.name, args)
+                        yield sse(
+                            {
+                                "type": "step",
+                                "agent": event.author,
+                                "tool": call.name,
+                                "label": step_label(call.name, args),
+                            }
+                        )
+                    elif part.function_response:
+                        result = part.function_response
+                        tool, args = calls.get(result.id, (result.name, {}))
+                        sources = sources_from(tool, args, dict(result.response or {}))
+                        if sources:
+                            yield sse({"type": "sources", "sources": sources})
+                if event.author == root_agent.name and event.is_final_response() and event.content:
+                    text = "".join(p.text or "" for p in event.content.parts or [])
+                    if text:
+                        yield sse({"type": "answer", "text": text})
+    except TimeoutError:
+        text = (
+            f"No answer after {ANSWER_TIMEOUT_SECONDS} s. The model service is probably busy, "
+            "please try again in a moment."
+        )
+        yield sse({"type": "error", "message": text})
     except Exception as error:  # report to the UI instead of breaking the stream
         yield sse({"type": "error", "message": str(error)})
 

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { specColor } from "../specs";
 import type { ChatMessage, Source, Step } from "../types";
 import Answer from "./Answer";
 
@@ -12,10 +13,10 @@ type Props = {
 };
 
 const EXAMPLES = [
-  "How does cell DTX/DRX work for network energy savings?",
-  "What is the A-MPR for NS_05 for power class 3?",
-  "Which three-band CA configurations include n78 and n105?",
-  "What does NCR mean in TS 38.321?",
+  { spec: "38.300", text: "How does cell DTX/DRX work for network energy savings?" },
+  { spec: "38.101-1", text: "What is the A-MPR for NS_05 for power class 3?" },
+  { spec: "38.101-1", text: "Which three-band CA configurations include n78 and n105?" },
+  { spec: "38.321", text: "What does NCR mean in TS 38.321?" },
 ];
 
 export default function ChatView({ messages, busy, selected, onSelect, onSend, onOpenSource }: Props) {
@@ -32,97 +33,156 @@ export default function ChatView({ messages, busy, selected, onSelect, onSend, o
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex-1 space-y-4 overflow-y-auto p-6">
-        {messages.length === 0 && (
-          <div className="mx-auto mt-10 max-w-xl text-center">
-            <h2 className="text-lg font-semibold text-slate-800">Ask about TS 38.300, 38.321 and 38.101-1</h2>
-            <p className="mt-1 text-sm text-slate-500">Answers cite the clauses they come from.</p>
-            <div className="mt-6 grid gap-2">
-              {EXAMPLES.map((example) => (
-                <button
-                  key={example}
-                  onClick={() => send(example)}
-                  className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-left text-sm text-slate-700 hover:border-blue-400"
-                >
-                  {example}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+      <div className="flex-1 overflow-y-auto px-6 py-8">
+        <div className="mx-auto max-w-3xl space-y-5">
+          {messages.length === 0 && <EmptyState onPick={send} />}
 
-        {messages.map((message, index) =>
-          message.role === "user" ? (
-            <div key={index} className="flex justify-end">
-              <div className="max-w-[80%] rounded-lg bg-blue-600 px-4 py-2 text-sm text-white">{message.text}</div>
-            </div>
-          ) : (
-            <div
-              key={index}
-              onClick={() => onSelect(index)}
-              className={`rounded-lg border bg-white px-5 py-4 ${
-                selected === index ? "border-blue-300 ring-1 ring-blue-200" : "border-slate-200"
-              }`}
-            >
-              <Steps steps={message.steps} done={message.done} />
-              {message.error && <p className="text-sm text-red-600">{message.error}</p>}
-              {message.text && (
-                <Answer text={message.text} sources={message.sources} onOpenSource={onOpenSource} />
-              )}
-            </div>
-          ),
-        )}
-        <div ref={bottom} />
+          {messages.map((message, index) =>
+            message.role === "user" ? (
+              <div key={index} className="rise flex justify-end">
+                <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-ink px-4 py-2.5 text-sm leading-relaxed text-paper shadow-[0_3px_0_0_var(--color-line)]">
+                  {message.text}
+                </div>
+              </div>
+            ) : (
+              <div
+                key={index}
+                onClick={() => onSelect(index)}
+                className={`rise cursor-default rounded-2xl rounded-tl-sm border bg-card px-5 py-4 transition ${
+                  selected === index
+                    ? "border-signal/40 shadow-[0_4px_0_0_var(--color-signal-soft)]"
+                    : "border-line shadow-[0_3px_0_0_var(--color-line)]"
+                }`}
+              >
+                <div className="mb-2 flex items-center gap-2">
+                  <span className="font-display text-sm font-semibold text-ink">
+                    Spec<span className="text-signal">Δ</span>
+                  </span>
+                  {!message.done && (
+                    <span className="signal-bars">
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                    </span>
+                  )}
+                </div>
+                <Steps steps={message.steps} done={message.done} seconds={message.seconds} />
+                {message.error && (
+                  <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+                    Something went wrong: {message.error}
+                  </p>
+                )}
+                {message.text && (
+                  <div className="rise">
+                    <Answer text={message.text} sources={message.sources} onOpenSource={onOpenSource} />
+                  </div>
+                )}
+              </div>
+            ),
+          )}
+          <div ref={bottom} />
+        </div>
       </div>
 
       <form
-        className="flex gap-2 border-t border-slate-200 bg-white p-4"
+        className="px-6 pb-6 pt-2"
         onSubmit={(event) => {
           event.preventDefault();
           send(input);
         }}
       >
-        <input
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          placeholder="Ask a question about the specs..."
-          className="flex-1 rounded-lg border border-slate-300 px-4 py-2 text-sm outline-none focus:border-blue-500"
-        />
-        <button
-          disabled={busy || !input.trim()}
-          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
-        >
-          Ask
-        </button>
+        <div className="mx-auto flex max-w-3xl items-center gap-2 rounded-2xl border border-line bg-card p-1.5 pl-5 shadow-[0_4px_0_0_var(--color-line)] transition focus-within:border-ink/40">
+          <input
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            maxLength={2000}
+            placeholder="Ask about a clause, a band, a MAC CE..."
+            className="flex-1 bg-transparent py-2 text-sm outline-none placeholder:text-ink-faint"
+          />
+          <button
+            disabled={busy || !input.trim()}
+            className="group flex items-center gap-1.5 rounded-xl bg-signal px-4 py-2 text-sm font-semibold text-white transition hover:bg-ink disabled:bg-line disabled:text-ink-faint"
+          >
+            Ask
+            <span className="transition group-hover:translate-x-0.5">→</span>
+          </button>
+        </div>
       </form>
+    </div>
+  );
+}
+
+function EmptyState({ onPick }: { onPick: (text: string) => void }) {
+  return (
+    <div className="pt-6 text-center">
+      <p className="rise font-mono text-[11px] uppercase tracking-[0.25em] text-ink-faint">
+        TS 38.300 · TS 38.321 · TS 38.101-1 · Rel-17 & Rel-18
+      </p>
+      <h2 className="rise mt-3 font-display text-5xl font-semibold leading-[1.05] tracking-tight text-ink [animation-delay:60ms]">
+        3GPP spec lookup
+      </h2>
+      <p className="rise mx-auto mt-4 max-w-md text-sm text-ink-soft [animation-delay:120ms]">
+        Questions about NR overview, MAC and UE RF requirements. Answers link to the clauses
+        they are based on.
+      </p>
+      <div className="mt-10 grid gap-3 text-left sm:grid-cols-2">
+        {EXAMPLES.map((example, i) => (
+          <button
+            key={example.text}
+            onClick={() => onPick(example.text)}
+            style={{ animationDelay: `${180 + i * 70}ms` }}
+            className={`rise group relative rounded-xl border border-line bg-card px-4 py-3.5 text-sm leading-snug text-ink shadow-[0_3px_0_0_var(--color-line)] transition hover:-translate-y-1 hover:rotate-0 hover:shadow-[0_6px_0_0_var(--color-line)] ${
+              i % 2 === 0 ? "-rotate-1" : "rotate-1"
+            }`}
+          >
+            <span
+              className="mb-2 inline-flex items-center gap-1.5 font-mono text-[10px] text-ink-faint"
+            >
+              <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: specColor(example.spec) }} />
+              {example.spec}
+            </span>
+            <span className="block group-hover:text-signal">{example.text}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
 
 // While the agents work, every tool call shows up as a line. Afterwards the steps fold
 // into a one-line summary that can be opened again.
-function Steps({ steps, done }: { steps: Step[]; done: boolean }) {
+function Steps({ steps, done, seconds }: { steps: Step[]; done: boolean; seconds?: number }) {
   if (!done) {
     return (
-      <ul className="mb-2 space-y-1 text-xs text-slate-500">
-        {steps.map((step, i) => (
-          <li key={i} className="flex items-center gap-2">
-            <span className={i === steps.length - 1 ? "animate-pulse text-blue-600" : "text-emerald-600"}>●</span>
-            {step.label}
-          </li>
-        ))}
-        {steps.length === 0 && <li className="animate-pulse">Thinking...</li>}
+      <ul className="mb-1 space-y-1.5 text-xs text-ink-soft">
+        {steps.map((step, i) => {
+          const current = i === steps.length - 1;
+          return (
+            <li key={i} className="rise flex items-start gap-2">
+              <span className={`mt-px font-mono ${current ? "text-signal" : "text-spec-38321"}`}>
+                {current ? "›" : "✓"}
+              </span>
+              <span className={current ? "text-ink" : ""}>{step.label}</span>
+            </li>
+          );
+        })}
+        {steps.length === 0 && <li className="font-display italic text-ink-faint">Working on it...</li>}
       </ul>
     );
   }
   if (steps.length === 0) return null;
   return (
-    <details className="mb-2 text-xs text-slate-500">
-      <summary className="cursor-pointer select-none">{steps.length} steps</summary>
-      <ul className="mt-1 space-y-1 pl-4">
+    <details className="group mb-3 text-xs text-ink-faint">
+      <summary className="inline-flex cursor-pointer select-none list-none items-center gap-1.5 rounded-full border border-line px-2.5 py-0.5 font-mono transition hover:text-ink">
+        <span className="transition group-open:rotate-90">›</span>
+        {steps.length} steps{seconds !== undefined ? ` · ${seconds.toFixed(0)} s` : ""}
+      </summary>
+      <ul className="mt-2 space-y-1 border-l border-line pl-3">
         {steps.map((step, i) => (
           <li key={i}>
-            <span className="text-slate-400">{step.agent}:</span> {step.label}
+            <span className="font-mono text-ink-faint">{step.agent}</span>{" "}
+            <span className="text-ink-soft">{step.label}</span>
           </li>
         ))}
       </ul>

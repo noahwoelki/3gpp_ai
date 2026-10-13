@@ -1,16 +1,20 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fetchClause, fetchTable } from "../api";
+import { specColor, specName } from "../specs";
 import type { Block, Clause, Source, Table } from "../types";
+import ClauseTag from "./ClauseTag";
 
 type Props = { source: Source; onClose: () => void };
+type Range = [number | null, number | null];
 
-// Shows the full clause or table behind a source, with the retrieved part highlighted
+// Shows the full clause or table behind a source, with the retrieved part marked
 export default function SourceViewer({ source, onClose }: Props) {
   const isTable = source.table_id !== null && source.kind !== "text";
   const [mode, setMode] = useState<"table" | "clause">(isTable ? "table" : "clause");
   const [clause, setClause] = useState<Clause | null>(null);
   const [table, setTable] = useState<Table | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const body = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setError(null);
@@ -24,58 +28,88 @@ export default function SourceViewer({ source, onClose }: Props) {
     }
   }, [source, mode]);
 
+  // Jump to the marked part once the content is there
+  useEffect(() => {
+    body.current?.querySelector("[data-marked]")?.scrollIntoView({ block: "center" });
+  }, [clause, table, mode]);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  const color = specColor(source.spec);
+
   return (
-    <div className="fixed inset-0 z-10 flex items-center justify-center bg-slate-900/40 p-6" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-20 flex items-center justify-center bg-ink/30 p-6 backdrop-blur-[2px]"
+      onClick={onClose}
+    >
       <div
-        className="flex max-h-full w-full max-w-4xl flex-col rounded-lg bg-white shadow-xl"
+        className="pop relative flex max-h-full w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-line bg-card shadow-[0_24px_60px_-20px_rgba(29,27,22,0.45)]"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-start gap-4 border-b border-slate-200 px-5 py-3">
-          <div>
-            <div className="text-sm font-semibold text-blue-800">{source.citation}</div>
-            <div className="text-base font-medium text-slate-900">{source.title}</div>
-            {clause && mode === "clause" && (
-              <div className="text-xs text-slate-500">{clause.path.join(" > ")}</div>
+        <div className="h-1.5 w-full" style={{ backgroundColor: color }} />
+        <div className="flex items-start gap-4 border-b border-line px-6 py-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <ClauseTag spec={source.spec} release={source.release} clauseId={source.clause_id} size="md" />
+              <span className="text-xs text-ink-faint">{specName(source.spec)}</span>
+            </div>
+            <h3 className="mt-2 font-display text-xl font-semibold leading-tight text-ink">{source.title}</h3>
+            {clause && mode === "clause" && clause.path.length > 0 && (
+              <div className="mt-1 text-xs text-ink-faint">{clause.path.join("  ›  ")}</div>
             )}
           </div>
-          <div className="ml-auto flex gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             {isTable && (
               <button
-                className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
+                className="rounded-full border border-line px-3 py-1 text-xs text-ink-soft transition hover:border-ink hover:text-ink"
                 onClick={() => setMode(mode === "table" ? "clause" : "table")}
               >
-                {mode === "table" ? "Show whole clause" : "Show table"}
+                {mode === "table" ? "Whole clause" : "Just the table"}
               </button>
             )}
-            <button className="rounded px-2 py-1 text-slate-500 hover:bg-slate-100" onClick={onClose}>
+            <button
+              aria-label="Close"
+              className="flex h-8 w-8 items-center justify-center rounded-full text-ink-faint transition hover:rotate-90 hover:bg-paper hover:text-ink"
+              onClick={onClose}
+            >
               ✕
             </button>
           </div>
         </div>
-        <div className="overflow-auto px-5 py-4 text-sm">
+
+        <div ref={body} className="overflow-auto px-6 py-5 text-sm leading-relaxed">
           {error && <p className="text-red-600">{error}</p>}
-          {source.kind === "glossary" && <p>{source.content}</p>}
+          {source.kind === "glossary" && <p className="text-base">{source.content}</p>}
           {mode === "table" && table && (
             <>
-              <p className="mb-2 text-xs font-medium text-slate-600">{table.caption}</p>
+              <p className="mb-3 font-display text-sm italic text-ink-soft">{table.caption}</p>
               <TableView
                 rows={table.rows}
                 headerRows={table.header_rows}
-                highlight={[source.row_start ?? null, source.row_end ?? null]}
+                marked={[source.row_start ?? null, source.row_end ?? null]}
               />
             </>
           )}
           {mode === "clause" && clause && (
             <ClauseView
               blocks={clause.blocks}
-              highlight={isTable ? [null, null] : [source.block_start ?? null, source.block_end ?? null]}
+              marked={isTable ? [null, null] : [source.block_start ?? null, source.block_end ?? null]}
             />
+          )}
+          {!error && source.kind !== "glossary" && !(mode === "table" ? table : clause) && (
+            <div className="flex items-center gap-2 text-ink-faint">
+              <span className="signal-bars">
+                <span />
+                <span />
+                <span />
+                <span />
+              </span>
+              Loading...
+            </div>
           )}
         </div>
       </div>
@@ -83,97 +117,100 @@ export default function SourceViewer({ source, onClose }: Props) {
   );
 }
 
-function inRange(index: number, [start, end]: [number | null, number | null]) {
+function inRange(index: number, [start, end]: Range) {
   return start !== null && end !== null && index >= start && index <= end;
 }
 
-function TableView({
-  rows,
-  headerRows,
-  highlight,
-}: {
-  rows: string[][];
-  headerRows: number;
-  highlight: [number | null, number | null];
-}) {
+function TableView({ rows, headerRows, marked }: { rows: string[][]; headerRows: number; marked: Range }) {
   return (
-    <table className="w-full border-collapse text-xs">
-      <thead>
-        {rows.slice(0, headerRows).map((row, i) => (
-          <tr key={i} className="bg-slate-100">
-            {row.map((cell, j) => (
-              <th key={j} className="border border-slate-200 px-2 py-1 text-left font-medium">
-                {cell}
-              </th>
-            ))}
-          </tr>
-        ))}
-      </thead>
-      <tbody>
-        {rows.slice(headerRows).map((row, i) => {
-          const index = i + headerRows; // row ranges count from the top of the table
-          const marked = inRange(index, highlight);
-          const fullWidth = new Set(row).size === 1; // NOTE or title row spanning the table
-          return (
-            <tr key={index} className={marked ? "bg-yellow-100" : ""}>
-              {fullWidth ? (
-                <td colSpan={row.length} className="border border-slate-200 px-2 py-1 text-slate-600">
-                  {row[0]}
-                </td>
-              ) : (
-                row.map((cell, j) => (
-                  <td key={j} className="border border-slate-200 px-2 py-1 align-top">
-                    {cell}
-                  </td>
-                ))
-              )}
+    <div className="overflow-x-auto rounded-lg border border-line">
+      <table className="w-full border-collapse text-xs">
+        <thead>
+          {rows.slice(0, headerRows).map((row, i) => (
+            <tr key={i} className="bg-paper-deep">
+              {row.map((cell, j) => (
+                <th key={j} className="border border-line px-2 py-1.5 text-left font-semibold text-ink">
+                  {cell}
+                </th>
+              ))}
             </tr>
-          );
-        })}
-      </tbody>
-    </table>
+          ))}
+        </thead>
+        <tbody>
+          {rows.slice(headerRows).map((row, i) => {
+            const index = i + headerRows; // row ranges count from the top of the table
+            const isMarked = inRange(index, marked);
+            const fullWidth = new Set(row).size === 1; // NOTE or title row spanning the table
+            return (
+              <tr
+                key={index}
+                data-marked={isMarked || undefined}
+                className={isMarked ? "bg-marker/60" : "even:bg-paper/50"}
+              >
+                {fullWidth ? (
+                  <td colSpan={row.length} className="border border-line px-2 py-1.5 text-ink-soft">
+                    {row[0]}
+                  </td>
+                ) : (
+                  row.map((cell, j) => (
+                    <td key={j} className="border border-line px-2 py-1 align-top">
+                      {cell}
+                    </td>
+                  ))
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
 // 3GPP paragraph styles: B1..B5 are list levels, NO/NW are notes, TH/TF captions
-function paragraphStyle(style: string) {
+function listIndent(style: string) {
   const level = style.match(/^B(\d)$/);
-  if (level) return { paddingLeft: `${Number(level[1]) * 1.25}rem` };
-  return {};
+  return level ? { paddingLeft: `${Number(level[1]) * 1.25}rem` } : {};
 }
 
-function ClauseView({ blocks, highlight }: { blocks: Block[]; highlight: [number | null, number | null] }) {
+function ClauseView({ blocks, marked }: { blocks: Block[]; marked: Range }) {
   if (blocks.length === 0) {
-    return <p className="text-slate-400">This clause has no text of its own, see its subclauses.</p>;
+    return (
+      <p className="font-display italic text-ink-faint">
+        No text in this clause itself, only in its subclauses.
+      </p>
+    );
   }
   return (
-    <div className="space-y-2">
+    <div className="space-y-2.5">
       {blocks.map((block, index) => {
-        const marked = inRange(index, highlight) ? "rounded bg-yellow-100 px-1" : "";
+        const isMarked = inRange(index, marked);
+        const markedProps = isMarked ? { "data-marked": true } : {};
         if (block.type === "table") {
           return (
-            <div key={index} className={`my-3 overflow-x-auto ${marked}`}>
-              <TableView rows={block.rows} headerRows={block.header_rows} highlight={[null, null]} />
+            <div key={index} {...markedProps} className={`my-4 ${isMarked ? "rounded-lg ring-4 ring-marker/70" : ""}`}>
+              <TableView rows={block.rows} headerRows={block.header_rows} marked={[null, null]} />
             </div>
           );
         }
+        const text = isMarked ? <span className="marker">{block.text}</span> : block.text;
         if (block.style === "NO" || block.style === "NW") {
           return (
-            <p key={index} className={`border-l-2 border-slate-300 pl-3 text-xs text-slate-600 ${marked}`}>
-              {block.text}
+            <p key={index} {...markedProps} className="rounded-r-md border-l-2 border-signal/60 bg-paper/60 py-1 pl-3 text-xs text-ink-soft">
+              {text}
             </p>
           );
         }
         if (block.style === "TH" || block.style === "TF") {
           return (
-            <p key={index} className={`text-center text-xs font-medium text-slate-600 ${marked}`}>
-              {block.text}
+            <p key={index} {...markedProps} className="pt-2 text-center font-display text-xs italic text-ink-soft">
+              {text}
             </p>
           );
         }
         return (
-          <p key={index} style={paragraphStyle(block.style)} className={marked}>
-            {block.text}
+          <p key={index} {...markedProps} style={listIndent(block.style)}>
+            {text}
           </p>
         );
       })}

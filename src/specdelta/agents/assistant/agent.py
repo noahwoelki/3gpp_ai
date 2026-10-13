@@ -64,10 +64,11 @@ are and do not add facts of your own.
 For greetings or questions about what you can do, answer briefly yourself.
 """
 
-# Retry with backoff, Vertex AI answers with 429 when the shared quota is busy
+# Retry with backoff, Vertex AI answers with 429 when the shared quota is busy. Kept
+# short (about 30 s at most), longer silent waiting looks like a hang in the UI.
 FLASH = Gemini(
     model=config.FLASH_MODEL,
-    retry_options=types.HttpRetryOptions(attempts=6, initial_delay=2, max_delay=60),
+    retry_options=types.HttpRetryOptions(attempts=4, initial_delay=2, max_delay=15),
 )
 
 # No thinking: with it, one answer took 15-40 s instead of 4-6 s. The agents mostly

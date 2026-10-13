@@ -31,6 +31,7 @@ export type ChatMessage =
       sources: Source[];
       error?: string;
       done: boolean;
+      seconds?: number; // how long the answer took, set when done
     };
 
 export type Filters = { specs: string[]; releases: string[] };

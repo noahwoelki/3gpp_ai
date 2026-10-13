@@ -32,6 +32,7 @@ export default function App() {
 
   const send = async (text: string) => {
     const index = messages.length + 1; // the user message goes first
+    const started = performance.now();
     setMessages((current) => [
       ...current,
       { role: "user", text },
@@ -55,7 +56,8 @@ export default function App() {
     } catch (error) {
       updateMessage(index, (m) => ({ ...m, error: String(error) }));
     } finally {
-      updateMessage(index, (m) => ({ ...m, done: true }));
+      const seconds = (performance.now() - started) / 1000;
+      updateMessage(index, (m) => ({ ...m, done: true, seconds }));
       setBusy(false);
     }
   };
@@ -63,21 +65,40 @@ export default function App() {
   const selectedMessage = selected !== null ? messages[selected] : null;
   const sources = selectedMessage?.role === "assistant" ? selectedMessage.sources : [];
 
-  const tabClass = (active: boolean) =>
-    `px-3 py-1.5 text-sm rounded-md ${active ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-200"}`;
-
   return (
-    <div className="flex h-screen flex-col">
-      <header className="flex flex-wrap items-center gap-4 border-b border-slate-200 bg-white px-6 py-3">
-        <h1 className="text-lg font-semibold text-slate-900">SpecDelta</h1>
-        <nav className="flex gap-1">
-          <button className={tabClass(tab === "ask")} onClick={() => setTab("ask")}>
-            Ask
-          </button>
-          <button className={tabClass(tab === "compare")} onClick={() => setTab("compare")}>
-            Compare releases
-          </button>
+    <div className="flex h-full flex-col">
+      <header className="flex flex-wrap items-center gap-x-6 gap-y-3 border-b border-line bg-paper/85 px-6 py-3 backdrop-blur">
+        <button
+          onClick={() => {
+            setTab("ask");
+            setMessages([]);
+            setSessionId(null);
+            setSelected(null);
+          }}
+          title="New conversation"
+          className="group flex items-baseline gap-0.5"
+        >
+          <span className="font-display text-2xl font-semibold tracking-tight text-ink">Spec</span>
+          <span className="inline-block font-display text-2xl font-semibold text-signal transition group-hover:-rotate-12 group-hover:scale-110">
+            Δ
+          </span>
+          <span className="font-display text-2xl font-semibold tracking-tight text-ink">elta</span>
+        </button>
+
+        <nav className="flex rounded-full border border-line bg-card p-0.5 text-sm">
+          {(["ask", "compare"] as const).map((name) => (
+            <button
+              key={name}
+              onClick={() => setTab(name)}
+              className={`rounded-full px-3.5 py-1 transition ${
+                tab === name ? "bg-ink text-paper" : "text-ink-soft hover:text-ink"
+              }`}
+            >
+              {name === "ask" ? "Ask" : "Compare releases"}
+            </button>
+          ))}
         </nav>
+
         <div className="ml-auto">
           <FilterBar available={available} filters={filters} onChange={setFilters} />
         </div>
@@ -95,25 +116,57 @@ export default function App() {
               onOpenSource={setOpenSource}
             />
           </section>
-          <aside className="w-96 shrink-0 overflow-y-auto border-l border-slate-200 bg-white">
-            <h2 className="border-b border-slate-100 px-4 py-3 text-sm font-semibold text-slate-700">
-              Sources {sources.length > 0 && <span className="text-slate-400">({sources.length})</span>}
+          <aside className="hidden w-[23rem] shrink-0 flex-col border-l border-line bg-paper-deep/40 lg:flex">
+            <h2 className="flex items-baseline gap-2 border-b border-line px-5 py-3">
+              <span className="font-display text-base font-semibold text-ink">Sources</span>
+              {sources.length > 0 && <span className="font-mono text-xs text-ink-faint">{sources.length}</span>}
             </h2>
-            <SourcesPanel sources={sources} onOpenSource={setOpenSource} />
+            <div className="flex-1 overflow-y-auto">
+              <SourcesPanel sources={sources} onOpenSource={setOpenSource} />
+            </div>
           </aside>
         </main>
       ) : (
-        <main className="flex flex-1 items-center justify-center text-center text-slate-500">
-          <div>
-            <p className="text-base font-medium text-slate-700">Release comparison is coming next</p>
-            <p className="mt-1 text-sm">
-              Rel-17 and Rel-18 clauses side by side, with a summary of what changed per clause.
-            </p>
-          </div>
-        </main>
+        <ComingSoon />
       )}
 
       {openSource && <SourceViewer source={openSource} onClose={() => setOpenSource(null)} />}
     </div>
+  );
+}
+
+// Placeholder for the release comparison: two clause cards, slightly apart, with a delta
+function ComingSoon() {
+  return (
+    <main className="flex flex-1 items-center justify-center px-6">
+      <div className="text-center">
+        <div className="relative mx-auto mb-10 h-40 w-72">
+          <div className="rise absolute left-0 top-4 w-44 -rotate-6 rounded-xl border border-line bg-card p-4 text-left shadow-[0_4px_0_0_var(--color-line)]">
+            <div className="font-mono text-[10px] text-ink-faint">Rel-17 · §15.4.2</div>
+            <div className="mt-2 space-y-1.5">
+              <div className="h-1.5 w-full rounded bg-line" />
+              <div className="h-1.5 w-4/5 rounded bg-line" />
+              <div className="h-1.5 w-3/5 rounded bg-line" />
+            </div>
+          </div>
+          <div className="rise absolute right-0 top-0 w-44 rotate-3 rounded-xl border border-line bg-card p-4 text-left shadow-[0_4px_0_0_var(--color-line)] [animation-delay:120ms]">
+            <div className="font-mono text-[10px] text-ink-faint">Rel-18 · §15.4.2</div>
+            <div className="mt-2 space-y-1.5">
+              <div className="h-1.5 w-full rounded bg-line" />
+              <div className="h-1.5 w-4/5 rounded bg-marker" />
+              <div className="h-1.5 w-full rounded bg-marker" />
+              <div className="h-1.5 w-2/5 rounded bg-line" />
+            </div>
+          </div>
+          <div className="pop absolute left-1/2 top-1/2 flex h-12 w-12 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-signal font-display text-2xl font-semibold text-white shadow-lg [animation-delay:300ms]">
+            Δ
+          </div>
+        </div>
+        <h2 className="font-display text-3xl font-semibold text-ink">Release comparison</h2>
+        <p className="mx-auto mt-2 max-w-sm text-sm text-ink-soft">
+          Not built yet. Rel-17 and Rel-18 clauses side by side, with a summary of the changes.
+        </p>
+      </div>
+    </main>
   );
 }
